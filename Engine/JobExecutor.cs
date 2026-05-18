@@ -98,6 +98,7 @@ namespace BreezeFlow.Engine
                     continue;
                 }
 
+                historyWriter?.FinishUnclosedSteps(RunStatus.Success, null);
                 if (runId > 0 && store != null)
                     store.EndRun(runId, finalStatus, finalError, historyWriter?.LastReportedRowCount);
             }

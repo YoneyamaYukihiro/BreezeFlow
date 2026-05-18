@@ -117,6 +117,7 @@ namespace BreezeFlow.Services
 
                     var engine = new ExecutionEngine();
                     await engine.ExecuteAsync(pipeline, progress, cts.Token);
+                    historyWriter?.FinishUnclosedSteps(RunStatus.Success, null);
                     if (runId > 0 && store != null)
                         store.EndRun(runId, RunStatus.Success, null, historyWriter?.LastReportedRowCount);
                     runId = -1; // 二重 End を防ぐ
