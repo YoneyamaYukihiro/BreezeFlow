@@ -2,13 +2,15 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
-using SampleELT.Engine;
-using SampleELT.Models;
+using BreezeFlow.Engine;
+using BreezeFlow.Models;
 
-namespace SampleELT.Dialogs
+namespace BreezeFlow.Dialogs
 {
     // ListView 表示用ラッパー
     internal class JobStepViewModel
@@ -31,9 +33,17 @@ namespace SampleELT.Dialogs
         private Job? _currentJob;
         private JobStep? _currentStep;
         private bool _isJobDirty;
+        private bool _suppressStepEvents;
 
-        public JobManagerDialog()
+        private readonly IProgress<string>? _externalLogger;
+        private CancellationTokenSource? _runCts;
+        private bool _isRunning;
+
+        public JobManagerDialog() : this(null) { }
+
+        public JobManagerDialog(IProgress<string>? externalLogger)
         {
+            _externalLogger = externalLogger;
             InitializeComponent();
             // 起動直後は空: ユーザーが「新規」または「開く」を押すまで編集領域は無効
             DisableEditPanels();
@@ -41,6 +51,13 @@ namespace SampleELT.Dialogs
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            if (_isRunning)
+            {
+                MessageBox.Show("ジョブ実行中はダイアログを閉じられません。停止してから閉じてください。",
+                    "実行中", MessageBoxButton.OK, MessageBoxImage.Information);
+                e.Cancel = true;
+                return;
+            }
             if (!ConfirmDiscardJobChanges())
                 e.Cancel = true;
             base.OnClosing(e);
@@ -156,11 +173,35 @@ namespace SampleELT.Dialogs
                 Filter = "Job files (*.job.json)|*.job.json|JSON files (*.json)|*.json",
                 FileName = string.IsNullOrEmpty(_currentJob.FilePath)
                     ? _currentJob.Name
-                    : Path.GetFileNameWithoutExtension(_currentJob.FilePath)
+                    : StripJobJsonExtension(Path.GetFileName(_currentJob.FilePath))
             };
             if (dialog.ShowDialog() != true) return;
 
-            SaveCurrentJobToFile(dialog.FileName);
+            // 名前を付けて保存ではジョブ名をファイル名に合わせる (Pipeline と同じ挙動)。
+            // タイトルや FilePathLabel が新ファイルの内容を反映するように NameTextBox を先に更新する。
+            var newPath = EnsureJobJsonExtension(dialog.FileName);
+            NameTextBox.Text = StripJobJsonExtension(Path.GetFileName(newPath));
+            SaveCurrentJobToFile(newPath);
+        }
+
+        /// <summary>"foo.job.json" → "foo"。Windows の SaveFileDialog の FileName は単一拡張子しか扱えないため自前で剥がす。</summary>
+        private static string StripJobJsonExtension(string fileName)
+        {
+            if (fileName.EndsWith(".job.json", StringComparison.OrdinalIgnoreCase))
+                return fileName.Substring(0, fileName.Length - ".job.json".Length);
+            if (fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                return fileName.Substring(0, fileName.Length - ".json".Length);
+            return Path.GetFileNameWithoutExtension(fileName);
+        }
+
+        /// <summary>SaveFileDialog の返却値を必ず ".job.json" 終端に正規化する。</summary>
+        private static string EnsureJobJsonExtension(string filePath)
+        {
+            if (filePath.EndsWith(".job.json", StringComparison.OrdinalIgnoreCase))
+                return filePath;
+            if (filePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                return filePath.Substring(0, filePath.Length - ".json".Length) + ".job.json";
+            return filePath + ".job.json";
         }
 
         private void SaveCurrentJobToFile(string filePath)
@@ -169,7 +210,8 @@ namespace SampleELT.Dialogs
 
             // フォームの内容を反映してから書き出し
             _currentJob.Name = NameTextBox.Text.Trim();
-            _currentJob.IsEnabled = EnabledCheckBox.IsChecked == true;
+            _currentJob.Comment = JobCommentTextBox.Text;
+            _currentJob.LogMode = LogModeComboBox.SelectedValue is LogMode mode ? mode : LogMode.OnError;
 
             try
             {
@@ -190,18 +232,8 @@ namespace SampleELT.Dialogs
         private void LoadJobToForm(Job job)
         {
             NameTextBox.Text = job.Name;
-            EnabledCheckBox.IsChecked = job.IsEnabled;
-
-            if (job.LastRunTime.HasValue)
-            {
-                var status = job.LastRunSuccess == true ? "成功" : "失敗";
-                LastRunTextBlock.Text =
-                    $"{job.LastRunTime.Value:yyyy/MM/dd HH:mm:ss}  [{status}]\n{job.LastRunMessage}";
-            }
-            else
-            {
-                LastRunTextBlock.Text = "（未実行）";
-            }
+            JobCommentTextBox.Text = job.Comment;
+            LogModeComboBox.SelectedValue = job.LogMode;
 
             RefreshStepsList(job);
             _currentStep = null;
@@ -230,9 +262,17 @@ namespace SampleELT.Dialogs
             if (StepsListView.SelectedItem is JobStepViewModel vm)
             {
                 _currentStep = vm.Source;
-                StepNameTextBox.Text = vm.Source.Name;
-                StepFileTextBox.Text = vm.Source.PipelineFilePath;
-                ContinueOnErrorCheckBox.IsChecked = vm.Source.ContinueOnError;
+                _suppressStepEvents = true;
+                try
+                {
+                    StepNameTextBox.Text = vm.Source.Name;
+                    StepFileTextBox.Text = vm.Source.PipelineFilePath;
+                    ContinueOnErrorCheckBox.IsChecked = vm.Source.ContinueOnError;
+                }
+                finally
+                {
+                    _suppressStepEvents = false;
+                }
                 StepEditPanel.IsEnabled = true;
             }
             else
@@ -240,6 +280,16 @@ namespace SampleELT.Dialogs
                 _currentStep = null;
                 StepEditPanel.IsEnabled = false;
             }
+        }
+
+        /// <summary>
+        /// ステップ編集パネル下段（コメント／ファイル／エラー時続行）が編集された時のハンドラ。
+        /// 「適用」未押下でも dirty 扱いにし、未保存のままダイアログを閉じようとした際に警告する。
+        /// </summary>
+        private void StepField_Changed(object sender, EventArgs e)
+        {
+            if (_suppressStepEvents) return;
+            if (_currentJob != null) MarkJobDirty();
         }
 
         private void AddStepButton_Click(object sender, RoutedEventArgs e)
@@ -361,6 +411,91 @@ namespace SampleELT.Dialogs
             var sorted = job.Steps.OrderBy(s => s.Order).ToList();
             for (int i = 0; i < sorted.Count; i++)
                 sorted[i].Order = i;
+        }
+
+        // ==================== 手動実行 ====================
+
+        private async void RunJobButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isRunning || _currentJob == null) return;
+
+            // フォームをジョブに反映してから保存（dirty なら確認、未保存ならファイル保存ダイアログ）
+            _currentJob.Name = NameTextBox.Text.Trim();
+            _currentJob.Comment = JobCommentTextBox.Text;
+            _currentJob.LogMode = LogModeComboBox.SelectedValue is LogMode mode ? mode : LogMode.OnError;
+
+            if (_isJobDirty || string.IsNullOrEmpty(_currentJob.FilePath))
+            {
+                var ans = MessageBox.Show(
+                    "ジョブに未保存の変更があります。保存してから実行しますか？\n（はい=保存して実行 / いいえ=保存せず実行 / キャンセル=中止）",
+                    "未保存の変更",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Question);
+
+                if (ans == MessageBoxResult.Cancel) return;
+                if (ans == MessageBoxResult.Yes)
+                {
+                    SaveJobFileButton_Click(sender, e);
+                    if (_isJobDirty) return; // 保存ダイアログがキャンセルされた場合
+                }
+            }
+
+            _runCts = new CancellationTokenSource();
+            SetRunningState(true);
+            _externalLogger?.Report($"===== ジョブ実行開始: {_currentJob.Name} =====");
+
+            try
+            {
+                var progress = new Progress<string>(msg =>
+                {
+                    _externalLogger?.Report(msg);
+                    StatusTextBlock.Text = msg;
+                    StatusTextBlock.Visibility = Visibility.Visible;
+                });
+
+                var executor = new JobExecutor();
+                await executor.ExecuteAsync(_currentJob, progress, _runCts.Token, trigger: "manual");
+
+                _externalLogger?.Report($"===== ジョブ実行完了: {_currentJob.Name} =====");
+                ShowStatus("実行完了");
+            }
+            catch (OperationCanceledException)
+            {
+                _externalLogger?.Report($"===== ジョブ実行キャンセル: {_currentJob.Name} =====");
+                ShowStatus("キャンセルされました");
+            }
+            catch (Exception ex)
+            {
+                _externalLogger?.Report($"===== ジョブ実行エラー [{_currentJob.Name}]: {ex.Message} =====");
+                ShowStatus($"エラー: {ex.Message}");
+            }
+            finally
+            {
+                _runCts?.Dispose();
+                _runCts = null;
+                SetRunningState(false);
+            }
+        }
+
+        private void StopJobButton_Click(object sender, RoutedEventArgs e)
+        {
+            _runCts?.Cancel();
+            StatusTextBlock.Text = "停止中...";
+            StatusTextBlock.Visibility = Visibility.Visible;
+        }
+
+        private void SetRunningState(bool running)
+        {
+            _isRunning = running;
+            RunJobButton.IsEnabled  = !running;
+            StopJobButton.IsEnabled = running;
+            NewJobFileButton.IsEnabled    = !running;
+            OpenJobFileButton.IsEnabled   = !running;
+            SaveJobFileButton.IsEnabled   = !running;
+            SaveAsJobFileButton.IsEnabled = !running;
+            EditPanel.IsEnabled  = !running && _currentJob != null;
+            StepsPanel.IsEnabled = !running && _currentJob != null;
+            StepEditPanel.IsEnabled = !running && _currentStep != null;
         }
 
         // ==================== 補助 ====================

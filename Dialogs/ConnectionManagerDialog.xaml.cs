@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Data.SqlClient;
@@ -7,25 +8,86 @@ using Microsoft.Win32;
 using MySqlConnector;
 using Npgsql;
 using Oracle.ManagedDataAccess.Client;
-using SampleELT.Models;
+using BreezeFlow.Models;
 
-namespace SampleELT.Dialogs
+namespace BreezeFlow.Dialogs
 {
     public partial class ConnectionManagerDialog : Window
     {
         private DbConnectionInfo? _currentConnection;
         private bool _suppressChangeEvents;
+        private readonly Pipeline? _referencePipeline;
 
-        public ConnectionManagerDialog()
+        public ConnectionManagerDialog(Guid? initialSelectionId = null, Pipeline? referencePipeline = null)
         {
             InitializeComponent();
+            _referencePipeline = referencePipeline;
             ConnectionListBox.ItemsSource = ConnectionRegistry.Instance.Connections;
+
+            if (initialSelectionId.HasValue)
+            {
+                var target = ConnectionRegistry.Instance.Connections
+                    .FirstOrDefault(c => c.Id == initialSelectionId.Value);
+                if (target != null) ConnectionListBox.SelectedItem = target;
+            }
+        }
+
+        /// <summary>
+        /// 現在のパイプラインで <paramref name="conn"/> を参照しているステップ名一覧を返す。
+        /// パイプラインが渡されていなければ空リスト。
+        /// </summary>
+        private System.Collections.Generic.List<string> FindReferencingSteps(DbConnectionInfo conn)
+        {
+            var result = new System.Collections.Generic.List<string>();
+            if (_referencePipeline == null) return result;
+
+            foreach (var step in _referencePipeline.Steps)
+            {
+                if (!step.Settings.TryGetValue("ConnectionId", out var idObj) || idObj == null)
+                    continue;
+                if (Guid.TryParse(idObj.ToString(), out var id) && id == conn.Id)
+                    result.Add(step.Name);
+            }
+            return result;
+        }
+
+        private void UpdateReferenceLabel(DbConnectionInfo conn)
+        {
+            if (ReferenceCountText == null) return;
+            var refs = FindReferencingSteps(conn);
+            if (refs.Count == 0)
+            {
+                ReferenceCountText.Text = _referencePipeline == null
+                    ? ""
+                    : "現在のパイプラインからの参照: 0 ステップ";
+                ReferenceCountText.Foreground =
+                    new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x61, 0x61, 0x61));
+            }
+            else
+            {
+                ReferenceCountText.Text =
+                    $"⚠ 現在のパイプラインで {refs.Count} 個のステップから参照中: "
+                    + string.Join(", ", refs);
+                ReferenceCountText.Foreground =
+                    new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD3, 0x2F, 0x2F));
+            }
         }
 
         private void ConnectionListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (EditPanel == null) return;
 
+            // 1) 古い選択のフォーム入力を自動保存
+            if (!_suppressChangeEvents
+                && e.RemovedItems.Count > 0
+                && e.RemovedItems[0] is DbConnectionInfo prev
+                && ConnectionRegistry.Instance.Connections.Contains(prev))
+            {
+                SaveEditsToModel(prev);
+                ConnectionRegistry.Instance.Save();
+            }
+
+            // 2) 新しい選択をフォームへロード
             if (ConnectionListBox.SelectedItem is not DbConnectionInfo conn)
             {
                 EditPanel.IsEnabled = false;
@@ -45,6 +107,9 @@ namespace SampleELT.Dialogs
             ConnNameBox.Text = conn.Name;
             UpdateSectionVisibility(conn.DbType);
             DbTypeCombo.SelectedIndex = DbTypeToComboIndex(conn.DbType);
+            EnvironmentCombo.SelectedIndex = EnvironmentToComboIndex(conn.Environment);
+            ReadOnlyCheck.IsChecked = conn.IsReadOnly;
+            UpdateReferenceLabel(conn);
 
             switch (conn.DbType)
             {
@@ -155,6 +220,64 @@ namespace SampleELT.Dialogs
             _                 => 0
         };
 
+        private static int EnvironmentToComboIndex(DbEnvironment env) => env switch
+        {
+            DbEnvironment.Development => 0,
+            DbEnvironment.Staging     => 1,
+            DbEnvironment.Production  => 2,
+            _                         => 0
+        };
+
+        private DbEnvironment ParseSelectedEnvironment()
+        {
+            var tag = (EnvironmentCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+            return tag switch
+            {
+                "Staging"    => DbEnvironment.Staging,
+                "Production" => DbEnvironment.Production,
+                _            => DbEnvironment.Development
+            };
+        }
+
+        private void EnvironmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressChangeEvents || _currentConnection == null) return;
+
+            var prevEnv = _currentConnection.Environment;
+            var newEnv = ParseSelectedEnvironment();
+            if (prevEnv == newEnv) return;
+
+            // Production への昇格は明示確認 (誤操作で本番扱いになるのを防ぐ)
+            if (newEnv == DbEnvironment.Production && prevEnv != DbEnvironment.Production)
+            {
+                var result = MessageBox.Show(
+                    $"接続「{_currentConnection.Name}」を Production としてマークしますか？\n\n" +
+                    "この接続を使う書き込み系ステップ (DB Output / Delete / Update / Insert/Update / Exec SQL) は、" +
+                    "実行前に確認ダイアログが表示されるようになります。",
+                    "Production マークの確認",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes)
+                {
+                    // ロールバック
+                    _suppressChangeEvents = true;
+                    EnvironmentCombo.SelectedIndex = EnvironmentToComboIndex(prevEnv);
+                    _suppressChangeEvents = false;
+                    return;
+                }
+            }
+
+            _currentConnection.Environment = newEnv;
+            ConnectionRegistry.Instance.Save();
+        }
+
+        private void ReadOnlyCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressChangeEvents || _currentConnection == null) return;
+            _currentConnection.IsReadOnly = ReadOnlyCheck.IsChecked == true;
+            ConnectionRegistry.Instance.Save();
+        }
+
         /// <summary>"host,port" or "host\instance" 形式の DataSource を分解する。</summary>
         private static void ParseSqlServerDataSource(
             string dataSource, out string host, out string port)
@@ -184,9 +307,92 @@ namespace SampleELT.Dialogs
             var dbType = ParseSelectedDbType();
             UpdateSectionVisibility(dbType);
 
-            // DbType をリアルタイム更新 → DisplayName (🔶/🐬/🐘/🟦/🦭/🪶) も即座に反映
+            // DbType を更新 → DisplayName (🔶/🐬/🐘/🟦/🦭/🪶) も即座に反映 → 自動保存
             if (_currentConnection != null)
+            {
                 _currentConnection.DbType = dbType;
+                _currentConnection.ConnectionString = BuildConnectionStringFor(dbType);
+                ConnectionRegistry.Instance.Save();
+            }
+        }
+
+        /// <summary>
+        /// 現在表示中の入力フィールドから ConnectionString を組み立てる。
+        /// </summary>
+        private string BuildConnectionStringFor(DbType dbType) => dbType switch
+        {
+            DbType.Oracle     => BuildOracleConnectionString(),
+            DbType.PostgreSQL => BuildPostgreSQLConnectionString(),
+            DbType.SqlServer  => BuildSqlServerConnectionString(),
+            DbType.Sqlite     => BuildSqliteConnectionString(),
+            _                 => BuildMySQLConnectionString()  // MySQL / MariaDB
+        };
+
+        /// <summary>
+        /// 編集中フォームの値を <paramref name="conn"/> に反映する (ファイル保存はしない)。
+        /// 接続名が空のときはモデル更新を行わない。
+        /// </summary>
+        private void SaveEditsToModel(DbConnectionInfo conn)
+        {
+            if (string.IsNullOrWhiteSpace(ConnNameBox.Text)) return;
+
+            var newName = ConnNameBox.Text.Trim();
+            WarnIfDuplicateName(conn, newName);
+
+            conn.Name = newName;
+            conn.DbType = ParseSelectedDbType();
+            conn.ConnectionString = BuildConnectionStringFor(conn.DbType);
+            conn.Environment = ParseSelectedEnvironment();
+            conn.IsReadOnly = ReadOnlyCheck.IsChecked == true;
+        }
+
+        /// <summary>
+        /// 接続名が他のエントリと重複しそうなら 1 度だけ警告する (ブロックはしない)。
+        /// </summary>
+        private void WarnIfDuplicateName(DbConnectionInfo conn, string newName)
+        {
+            if (string.Equals(conn.Name, newName, StringComparison.Ordinal)) return;
+            if (_dupNameWarned.Contains(newName)) return;
+
+            var clash = ConnectionRegistry.Instance.Connections
+                .Any(c => c.Id != conn.Id
+                    && string.Equals(c.Name, newName, StringComparison.OrdinalIgnoreCase));
+            if (!clash) return;
+
+            _dupNameWarned.Add(newName);
+            MessageBox.Show(
+                $"接続名「{newName}」は別の接続と重複しています。\n" +
+                "ステップ設定ダイアログで紛らわしくなるため、名前を変えることをお勧めします。\n" +
+                "(この警告は同じ名前については一度だけ表示されます)",
+                "重複した接続名",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+
+        private readonly System.Collections.Generic.HashSet<string> _dupNameWarned =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 現在編集中の接続が「＋ 追加」直後の未編集デフォルト状態か判定する。
+        /// 接続名が「新しい接続」のまま、かつ現セクションのサーバー / ファイルパスが
+        /// 空または XAML 既定値 (localhost) のままなら true。
+        /// </summary>
+        private bool IsCurrentEntryUnedited()
+        {
+            if (_currentConnection == null) return false;
+            if (ConnNameBox.Text?.Trim() != "新しい接続") return false;
+
+            var dbType = ParseSelectedDbType();
+            string serverLike = dbType switch
+            {
+                DbType.Oracle     => OracleServerBox.Text?.Trim() ?? "",
+                DbType.MySQL or DbType.MariaDB => MySQLServerBox.Text?.Trim() ?? "",
+                DbType.PostgreSQL => PgServerBox.Text?.Trim() ?? "",
+                DbType.SqlServer  => MssServerBox.Text?.Trim() ?? "",
+                DbType.Sqlite     => SqlitePathBox.Text?.Trim() ?? "",
+                _                 => ""
+            };
+            return string.IsNullOrEmpty(serverLike) || serverLike == "localhost";
         }
 
         private DbType ParseSelectedDbType()
@@ -215,6 +421,19 @@ namespace SampleELT.Dialogs
 
         private void AddConnection_Click(object sender, RoutedEventArgs e)
         {
+            // 現在のエントリが未編集デフォルトのままなら連打をブロック
+            if (IsCurrentEntryUnedited())
+            {
+                MessageBox.Show(
+                    "現在編集中の「新しい接続」に接続名とサーバー（または SQLite のファイルパス）を入力してから、次の接続を追加してください。",
+                    "情報",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                ConnNameBox.Focus();
+                ConnNameBox.SelectAll();
+                return;
+            }
+
             var conn = new DbConnectionInfo
             {
                 Name = "新しい接続",
@@ -222,9 +441,28 @@ namespace SampleELT.Dialogs
                 ConnectionString = ""
             };
             ConnectionRegistry.Instance.Connections.Add(conn);
+            // この時点で旧選択は SelectionChanged → SaveEditsToModel + Save で永続化される
             ConnectionListBox.SelectedItem = conn;
+            ConnectionRegistry.Instance.Save();
             ConnNameBox.Focus();
             ConnNameBox.SelectAll();
+        }
+
+        private void MoveUp_Click(object sender, RoutedEventArgs e)
+        {
+            var idx = ConnectionListBox.SelectedIndex;
+            if (idx <= 0) return;
+            ConnectionRegistry.Instance.Connections.Move(idx, idx - 1);
+            ConnectionRegistry.Instance.Save();
+        }
+
+        private void MoveDown_Click(object sender, RoutedEventArgs e)
+        {
+            var idx = ConnectionListBox.SelectedIndex;
+            var coll = ConnectionRegistry.Instance.Connections;
+            if (idx < 0 || idx >= coll.Count - 1) return;
+            coll.Move(idx, idx + 1);
+            ConnectionRegistry.Instance.Save();
         }
 
         private void DeleteConnection_Click(object sender, RoutedEventArgs e)
@@ -245,70 +483,16 @@ namespace SampleELT.Dialogs
             EditPanel.IsEnabled = false;
         }
 
-        private void SaveConnection_Click(object sender, RoutedEventArgs e)
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
-            if (_currentConnection == null) return;
-
-            if (string.IsNullOrWhiteSpace(ConnNameBox.Text))
+            // ダイアログ閉じる時に編集中の内容を自動保存
+            if (_currentConnection != null
+                && ConnectionRegistry.Instance.Connections.Contains(_currentConnection))
             {
-                MessageBox.Show("接続名を入力してください。", "入力エラー",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                SaveEditsToModel(_currentConnection);
+                ConnectionRegistry.Instance.Save();
             }
-
-            _currentConnection.Name = ConnNameBox.Text.Trim();
-
-            var dbType = ParseSelectedDbType();
-            _currentConnection.DbType = dbType;
-
-            switch (dbType)
-            {
-                case DbType.Oracle:
-                    if (string.IsNullOrWhiteSpace(OracleServerBox.Text))
-                    {
-                        MessageBox.Show("サーバーを入力してください。", "入力エラー",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                    _currentConnection.ConnectionString = BuildOracleConnectionString();
-                    break;
-                case DbType.PostgreSQL:
-                    if (string.IsNullOrWhiteSpace(PgServerBox.Text))
-                    {
-                        MessageBox.Show("サーバーを入力してください。", "入力エラー",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                    _currentConnection.ConnectionString = BuildPostgreSQLConnectionString();
-                    break;
-                case DbType.SqlServer:
-                    if (string.IsNullOrWhiteSpace(MssServerBox.Text))
-                    {
-                        MessageBox.Show("サーバーを入力してください。", "入力エラー",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                    _currentConnection.ConnectionString = BuildSqlServerConnectionString();
-                    break;
-                case DbType.Sqlite:
-                    if (string.IsNullOrWhiteSpace(SqlitePathBox.Text))
-                    {
-                        MessageBox.Show("データベースファイルのパスを指定してください。", "入力エラー",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                    _currentConnection.ConnectionString = BuildSqliteConnectionString();
-                    break;
-                default:
-                    // MySQL / MariaDB は同じ MySqlConnector ドライバを使用
-                    _currentConnection.ConnectionString = BuildMySQLConnectionString();
-                    break;
-            }
-
-            ConnectionRegistry.Instance.Save();
-
-            MessageBox.Show("保存しました。", "完了",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            base.OnClosing(e);
         }
 
         private string BuildMySQLConnectionString()
@@ -403,34 +587,9 @@ namespace SampleELT.Dialogs
             return builder.ConnectionString;
         }
 
-        /// <summary>
-        /// "host:port/service" 形式の DataSource を分解する。
-        /// </summary>
         private static void ParseOracleDataSource(
             string dataSource, out string host, out string port, out string service)
-        {
-            host = "localhost"; port = "1521"; service = "ORCL";
-            if (string.IsNullOrWhiteSpace(dataSource)) return;
-
-            var colonIdx = dataSource.IndexOf(':');
-            var slashIdx = dataSource.IndexOf('/');
-
-            if (colonIdx > 0 && slashIdx > colonIdx)
-            {
-                host    = dataSource[..colonIdx];
-                port    = dataSource[(colonIdx + 1)..slashIdx];
-                service = dataSource[(slashIdx + 1)..];
-            }
-            else if (slashIdx > 0)
-            {
-                host    = dataSource[..slashIdx];
-                service = dataSource[(slashIdx + 1)..];
-            }
-            else
-            {
-                host = dataSource; // TNS 名などそのまま使用
-            }
-        }
+            => BreezeFlow.Tools.OracleDataSourceParser.Parse(dataSource, out host, out port, out service);
 
         private async void TestConnection_Click(object sender, RoutedEventArgs e)
         {

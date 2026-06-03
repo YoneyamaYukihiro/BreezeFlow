@@ -1,14 +1,15 @@
 using System;
 using System.Linq;
 using System.Windows;
+using System.Windows.Input;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using MySqlConnector;
 using Npgsql;
 using Oracle.ManagedDataAccess.Client;
-using SampleELT.Models;
+using BreezeFlow.Models;
 
-namespace SampleELT.Dialogs
+namespace BreezeFlow.Dialogs
 {
     public partial class ExecSQLDialog : Window
     {
@@ -52,7 +53,7 @@ namespace SampleELT.Dialogs
         private void ManageConnections_Click(object sender, RoutedEventArgs e)
         {
             var currentId = (ConnectionCombo.SelectedItem as DbConnectionInfo)?.Id;
-            var dialog = new ConnectionManagerDialog { Owner = this };
+            var dialog = new ConnectionManagerDialog(currentId) { Owner = this };
             dialog.ShowDialog();
             RefreshConnectionList(currentId);
         }
@@ -136,6 +137,20 @@ namespace SampleELT.Dialogs
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
+        }
+
+        private void SQLBox_PreviewKeyDown(object sender, KeyEventArgs e)
+            => Controls.SqlEditorBehavior.HandlePreviewKeyDown(sender, e);
+
+        private void SQLBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            var dialog = new SQLEditorDialog { Owner = this };
+            dialog.Initialize(SQLBox.Text);
+            if (dialog.ShowDialog() == true)
+            {
+                SQLBox.Text = dialog.SQL;
+            }
+            e.Handled = true;
         }
     }
 }

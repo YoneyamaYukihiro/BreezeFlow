@@ -1,10 +1,10 @@
 using System;
 using System.Windows;
-using SampleELT.Dialogs;
-using SampleELT.Models;
-using SampleELT.ViewModels;
+using BreezeFlow.Dialogs;
+using BreezeFlow.Models;
+using BreezeFlow.ViewModels;
 
-namespace SampleELT.Services
+namespace BreezeFlow.Services
 {
     /// <summary>
     /// 各ステップタイプの設定ダイアログ表示を一手に引き受けるサービス。
@@ -17,7 +17,7 @@ namespace SampleELT.Services
         /// ステップ種別に応じた設定ダイアログをモーダル表示する。
         /// ユーザーが OK で確定した場合、Step.Settings と Step.Name を更新し ViewModel に通知する。
         /// </summary>
-        public void ShowSettingsDialog(Window owner, StepNodeViewModel stepVm)
+        public void ShowSettingsDialog(Window owner, StepNodeViewModel stepVm, Pipeline? pipeline = null)
         {
             switch (stepVm.Step.StepType)
             {
@@ -32,7 +32,7 @@ namespace SampleELT.Services
                 case StepType.ExcelOutput:   OpenExcelOutputDialog(owner, stepVm); break;
                 case StepType.Filter:        OpenFilterDialog(owner, stepVm); break;
                 case StepType.Calculation:   OpenCalculationDialog(owner, stepVm); break;
-                case StepType.SelectValues:  OpenSelectValuesDialog(owner, stepVm); break;
+                case StepType.SelectValues:  OpenSelectValuesDialog(owner, stepVm, pipeline); break;
                 case StepType.DBDelete:      OpenDBDeleteDialog(owner, stepVm); break;
                 case StepType.InsertUpdate:  OpenInsertUpdateDialog(owner, stepVm); break;
                 case StepType.ExecSQL:       OpenExecSQLDialog(owner, stepVm); break;
@@ -40,6 +40,30 @@ namespace SampleELT.Services
                 case StepType.MergeJoin:     OpenMergeJoinDialog(owner, stepVm); break;
                 case StepType.DBUpdate:      OpenDBUpdateDialog(owner, stepVm); break;
                 case StepType.SetVariable:   OpenSetVariableDialog(owner, stepVm); break;
+                case StepType.TableCompare:  OpenTableCompareDialog(owner, stepVm); break;
+                case StepType.Switch:        OpenSwitchDialog(owner, stepVm); break;
+            }
+        }
+
+        private static void OpenSwitchDialog(Window owner, StepNodeViewModel stepVm)
+        {
+            var step = stepVm.Step;
+            var dialog = new SwitchDialog { Owner = owner };
+
+            dialog.Initialize(
+                step.Name,
+                GetString(step.Settings, "FieldName"),
+                GetString(step.Settings, "Cases"),
+                includeDefault: GetBool(step.Settings, "IncludeDefault", true));
+
+            if (dialog.ShowDialog() == true)
+            {
+                step.Name = dialog.StepName;
+                step.Settings["FieldName"]      = dialog.FieldName;
+                step.Settings["Cases"]          = dialog.Cases;
+                step.Settings["IncludeDefault"] = dialog.IncludeDefault ? "true" : "false";
+                stepVm.NotifyNameChanged();
+                stepVm.NotifyOutputPortsChanged();
             }
         }
 
@@ -217,12 +241,12 @@ namespace SampleELT.Services
             }
         }
 
-        private static void OpenSelectValuesDialog(Window owner, StepNodeViewModel stepVm)
+        private static void OpenSelectValuesDialog(Window owner, StepNodeViewModel stepVm, Pipeline? pipeline)
         {
             var step = stepVm.Step;
             var dialog = new SelectValuesDialog { Owner = owner };
 
-            dialog.Initialize(step.Name, GetString(step.Settings, "FieldMappings"));
+            dialog.Initialize(step.Name, GetString(step.Settings, "FieldMappings"), pipeline, step.Id);
 
             if (dialog.ShowDialog() == true)
             {
@@ -367,6 +391,34 @@ namespace SampleELT.Services
             }
         }
 
+        private static void OpenTableCompareDialog(Window owner, StepNodeViewModel stepVm)
+        {
+            var step = stepVm.Step;
+            var dialog = new TableCompareDialog { Owner = owner };
+
+            dialog.Initialize(
+                step.Name,
+                GetString(step.Settings, "KeyFields"),
+                GetString(step.Settings, "CompareFields"),
+                nullsEqual:     GetBool(step.Settings, "NullsEqual",     true),
+                ignoreCase:     GetBool(step.Settings, "IgnoreCase",     false),
+                trimStrings:    GetBool(step.Settings, "TrimStrings",    false),
+                includeMatched: GetBool(step.Settings, "IncludeMatched", false));
+
+            if (dialog.ShowDialog() == true)
+            {
+                step.Name = dialog.StepName;
+                step.Settings["KeyFields"]      = dialog.KeyFields;
+                step.Settings["CompareFields"]  = dialog.CompareFields;
+                step.Settings["NullsEqual"]     = dialog.NullsEqual     ? "true" : "false";
+                step.Settings["IgnoreCase"]     = dialog.IgnoreCase     ? "true" : "false";
+                step.Settings["TrimStrings"]    = dialog.TrimStrings    ? "true" : "false";
+                step.Settings["IncludeMatched"] = dialog.IncludeMatched ? "true" : "false";
+                stepVm.NotifyNameChanged();
+                stepVm.NotifyConnectionChanged();
+            }
+        }
+
         private static void OpenSetVariableDialog(Window owner, StepNodeViewModel stepVm)
         {
             var step = stepVm.Step;
@@ -406,6 +458,18 @@ namespace SampleELT.Services
             string key)
             => settings.TryGetValue(key, out var v)
                && v?.ToString()?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+
+        /// <summary>キー欠落時に既定値を返す bool 取得。</summary>
+        private static bool GetBool(
+            System.Collections.Generic.Dictionary<string, object?> settings,
+            string key,
+            bool defaultValue)
+        {
+            if (!settings.TryGetValue(key, out var v) || v == null) return defaultValue;
+            var s = v.ToString();
+            if (string.IsNullOrEmpty(s)) return defaultValue;
+            return bool.TryParse(s, out var b) ? b : defaultValue;
+        }
 
         private static int GetInt(
             System.Collections.Generic.Dictionary<string, object?> settings,

@@ -1,10 +1,11 @@
 using System.Collections.Generic;
 
-namespace SampleELT.Models
+namespace BreezeFlow.Models
 {
     public class Pipeline
     {
         public string Name { get; set; } = "New Pipeline";
+        public LogMode LogMode { get; set; } = LogMode.OnError;
         public List<StepBase> Steps { get; set; } = new();
         public List<PipelineConnection> Connections { get; set; } = new();
     }

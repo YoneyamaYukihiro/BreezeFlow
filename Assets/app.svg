@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BreezeFlow app icon (256x256). Canonical source for the design.
+  Render to multi-size .ico via Assets/build-icon.ps1.
+
+  Concept: a single bold leaf filling the frame (Breeze + Flow).
+  Clean and minimal: no scattered dots or streaks — just the leaf,
+  its midrib and a few veins, on a soft cyan field.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#80DEEA"/>
+      <stop offset="1" stop-color="#00838F"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2E7D32"/>
+      <stop offset="1" stop-color="#9CCC65"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded square background -->
+  <rect x="8" y="8" width="240" height="240" rx="40" ry="40" fill="url(#bg)"/>
+
+  <!-- stem -->
+  <path d="M 60 224 Q 52 235 46 244"
+        stroke="#2E7D32" stroke-width="9" stroke-linecap="round" fill="none"/>
+
+  <!-- leaf body: base at (60,224), tip at (196,40) — large, fills the frame -->
+  <path d="M 60 224
+           C 171 212, 216 152, 196 40
+           C 85 52, 40 112, 60 224 Z"
+        fill="url(#leaf)"/>
+
+  <!-- midrib -->
+  <path d="M 60 224 Q 115 120 196 40"
+        stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.6"/>
+
+  <!-- side veins -->
+  <g stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.5">
+    <path d="M 102 154 Q 115 156 121 168"/>
+    <path d="M 102 154 Q 96 142 83 140"/>
+    <path d="M 128 117 Q 141 119 147 131"/>
+    <path d="M 128 117 Q 122 105 109 103"/>
+    <path d="M 153 87  Q 165 90  171 100"/>
+    <path d="M 153 87  Q 147 77  135 74"/>
+  </g>
+
+  <!-- BreezeFlow wordmark at the top, stretched to span the icon width -->
+  <text x="128" y="36" text-anchor="middle" textLength="206" lengthAdjust="spacingAndGlyphs"
+        font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700"
+        fill="#00474D" opacity="0.92">BreezeFlow</text>
+
+  <!-- small ELT wordmark at the bottom, stretched horizontally (matrix scales x by 1.7 around center x=140) -->
+  <text x="140" y="244" text-anchor="middle" transform="matrix(1.7 0 0 1 -98 0)"
+        font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700"
+        letter-spacing="1" fill="#FFFFFF" opacity="0.9">ELT</text>
+</svg>

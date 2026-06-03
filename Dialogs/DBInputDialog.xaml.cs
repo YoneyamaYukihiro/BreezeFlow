@@ -10,10 +10,10 @@ using Microsoft.Data.Sqlite;
 using MySqlConnector;
 using Npgsql;
 using Oracle.ManagedDataAccess.Client;
-using SampleELT.Models;
+using BreezeFlow.Models;
 using DataTable = System.Data.DataTable;
 
-namespace SampleELT.Dialogs
+namespace BreezeFlow.Dialogs
 {
     public partial class DBInputDialog : Window
     {
@@ -79,7 +79,7 @@ namespace SampleELT.Dialogs
         private void ManageConnections_Click(object sender, RoutedEventArgs e)
         {
             var currentId = (ConnectionCombo.SelectedItem as DbConnectionInfo)?.Id;
-            var dialog = new ConnectionManagerDialog { Owner = this };
+            var dialog = new ConnectionManagerDialog(currentId) { Owner = this };
             dialog.ShowDialog();
             RefreshConnectionList(currentId);
         }
@@ -431,6 +431,16 @@ namespace SampleELT.Dialogs
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
+        }
+
+        private void SQLBox_PreviewKeyDown(object sender, KeyEventArgs e)
+            => Controls.SqlEditorBehavior.HandlePreviewKeyDown(sender, e);
+
+        /// <summary>DataGrid ヘッダーの `_` をアクセスキー消費から守るためにエスケープする。</summary>
+        private void PreviewGrid_AutoGeneratingColumn(object sender, DataGridAutoGeneratingColumnEventArgs e)
+        {
+            if (e.Column.Header is string h)
+                e.Column.Header = h.Replace("_", "__");
         }
 
         private void SQLBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)

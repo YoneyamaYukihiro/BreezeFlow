@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
 
-namespace SampleELT.Models.Serialization
+namespace BreezeFlow.Models.Serialization
 {
     /// <summary>パイプライン JSON のルート DTO。</summary>
     public class PipelineSerializationModel
     {
         public string Name { get; set; } = "New Pipeline";
+        public LogMode LogMode { get; set; } = LogMode.OnError;
         public List<StepSerializationModel> Steps { get; set; } = new();
         public List<ConnectionSerializationModel> Connections { get; set; } = new();
     }
@@ -28,5 +29,7 @@ namespace SampleELT.Models.Serialization
         public Guid Id { get; set; }
         public Guid SourceStepId { get; set; }
         public Guid TargetStepId { get; set; }
+        /// <summary>出力元ステップのポート Key (多ポート対応)。null/空 = 既定の単一ポート。</summary>
+        public string? SourceBranchKey { get; set; }
     }
 }

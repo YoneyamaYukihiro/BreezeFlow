@@ -2,20 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using SampleELT.Engine;
-using SampleELT.Models;
+using BreezeFlow.Engine;
+using BreezeFlow.Models;
 
-namespace SampleELT.Steps
+namespace BreezeFlow.Steps
 {
     public class OracleInputStep : StepBase
     {
         public override StepType StepType => StepType.OracleInput;
 
-        public override Task<List<Dictionary<string, object?>>> ExecuteAsync(
-            List<Dictionary<string, object?>> inputData,
+        public override IAsyncEnumerable<Dictionary<string, object?>> ExecuteStreamingAsync(
+            IAsyncEnumerable<Dictionary<string, object?>> input,
             IProgress<string> progress,
             CancellationToken ct)
-            => DbInputExecutor.ExecuteAsync(OracleProvider.Instance, Settings, inputData, progress, ct);
+            => DbInputExecutor.ExecuteStreamingAsync(OracleProvider.Instance, Settings, input, progress, ct);
 
         public override string GetDisplayIcon() => "🔶";
     }

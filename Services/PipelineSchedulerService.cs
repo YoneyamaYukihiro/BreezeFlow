@@ -4,11 +4,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
-using SampleELT.Engine;
-using SampleELT.Models;
-using SampleELT.Models.Stores;
+using BreezeFlow.Engine;
+using BreezeFlow.Models;
+using BreezeFlow.Models.Stores;
 
-namespace SampleELT.Services
+namespace BreezeFlow.Services
 {
     /// <summary>
     /// アプリ内で 1 分ごとにスケジュールエントリを評価し、期限が来たジョブ／パイプラインを実行する。
@@ -45,20 +45,29 @@ namespace SampleELT.Services
         {
             var now = DateTime.Now;
             var store = IScheduleStore.Default;
-            bool anyRan = false;
+            bool anyChanged = false;
 
             foreach (var entry in store.Schedules.Where(s => s.IsEnabled && s.Mode == ScheduleMode.InApp))
             {
                 var lastDue = store.CalcLastDueTime(entry, now);
                 if (lastDue == null) continue;
 
-                if (entry.LastRunTime.HasValue && entry.LastRunTime.Value >= lastDue.Value) continue;
+                // 初回観測 (一度も実行していない) は過去の予定時刻を catch-up しない:
+                // LastRunTime=now を記録して、次の予定時刻まで待たせる。
+                if (!entry.LastRunTime.HasValue)
+                {
+                    entry.LastRunTime = now;
+                    anyChanged = true;
+                    continue;
+                }
+
+                if (entry.LastRunTime.Value >= lastDue.Value) continue;
 
                 await RunEntryAsync(entry);
-                anyRan = true;
+                anyChanged = true;
             }
 
-            if (anyRan) store.Save();
+            if (anyChanged) store.Save();
         }
 
         private async Task RunEntryAsync(ScheduleEntry entry)
@@ -67,6 +76,13 @@ namespace SampleELT.Services
             entry.LastRunTime = DateTime.Now;
 
             var cts = new CancellationTokenSource();
+            var store = RunHistoryStore.Instance;
+
+            // パイプライン単体実行時のみ自前で履歴を記録する (ジョブの場合は JobExecutor が記録する)
+            long runId = -1;
+            RunHistoryProgressWriter? historyWriter = null;
+            IProgress<string> progress = _logger;
+
             try
             {
                 if (entry.Target == ScheduleTarget.Job)
@@ -78,7 +94,7 @@ namespace SampleELT.Services
 
                     var job = JobLoader.LoadFromFile(entry.JobFilePath);
                     var executor = new JobExecutor();
-                    await executor.ExecuteAsync(job, _logger, cts.Token);
+                    await executor.ExecuteAsync(job, _logger, cts.Token, trigger: "schedule");
                 }
                 else
                 {
@@ -86,8 +102,25 @@ namespace SampleELT.Services
                         throw new FileNotFoundException($"パイプラインファイルが見つかりません: {entry.PipelineFilePath}");
 
                     var pipeline = PipelineLoader.LoadFromFile(entry.PipelineFilePath);
+                    if (store != null)
+                    {
+                        runId = store.BeginRun(new RunRecord
+                        {
+                            PipelinePath = entry.PipelineFilePath,
+                            PipelineName = pipeline.Name,
+                            Trigger = "schedule",
+                            StartedAt = DateTime.Now
+                        });
+                        historyWriter = new RunHistoryProgressWriter(store, runId, _logger);
+                        progress = historyWriter;
+                    }
+
                     var engine = new ExecutionEngine();
-                    await engine.ExecuteAsync(pipeline, _logger, cts.Token);
+                    await engine.ExecuteAsync(pipeline, progress, cts.Token);
+                    historyWriter?.FinishUnclosedSteps(RunStatus.Success, null);
+                    if (runId > 0 && store != null)
+                        store.EndRun(runId, RunStatus.Success, null, historyWriter?.LastReportedRowCount);
+                    runId = -1; // 二重 End を防ぐ
                 }
 
                 entry.LastRunSuccess = true;
@@ -98,6 +131,9 @@ namespace SampleELT.Services
             {
                 entry.LastRunSuccess = false;
                 entry.LastRunMessage = ex.Message;
+                historyWriter?.FinishUnclosedSteps(RunStatus.Failed, ex.Message);
+                if (runId > 0 && store != null)
+                    store.EndRun(runId, RunStatus.Failed, ex.Message, historyWriter?.LastReportedRowCount);
                 _logger.Report($"===== スケジュール実行エラー [{entry.Name}]: {ex.Message} =====");
             }
             finally

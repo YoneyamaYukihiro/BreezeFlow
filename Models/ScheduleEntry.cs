@@ -1,6 +1,6 @@
 using System;
 
-namespace SampleELT.Models
+namespace BreezeFlow.Models
 {
     public enum ScheduleTarget
     {
@@ -26,10 +26,11 @@ namespace SampleELT.Models
     {
         public Guid Id { get; set; } = Guid.NewGuid();
         public string Name { get; set; } = "";
+        public string Comment { get; set; } = "";
         public ScheduleTarget Target { get; set; } = ScheduleTarget.Pipeline;
         public string PipelineFilePath { get; set; } = "";
         public string JobFilePath { get; set; } = "";
-        public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; } = false;
         public ScheduleMode Mode { get; set; } = ScheduleMode.InApp;
         public ScheduleType Type { get; set; } = ScheduleType.Daily;
 
