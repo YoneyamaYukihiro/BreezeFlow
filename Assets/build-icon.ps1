@@ -2,7 +2,7 @@
 # Renders sizes 16/24/32/48/64/128/256 as PNGs and packs them into a
 # multi-size PNG-embedded ICO. Windows PowerShell 5.1 compatible.
 #
-# Design: BreezeFlow tilted leaf (with stem) + breeze streaks + data dots.
+# Design: BreezeFlow single bold leaf filling the frame (stem + midrib + veins).
 
 Add-Type -AssemblyName System.Drawing
 
@@ -69,79 +69,95 @@ function New-IconPng {
     $bgBrush.Dispose()
     $bgPath.Dispose()
 
-    # ---- breeze streaks (white, alpha ~0.4) ----
-    $breezePen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(102, 255, 255, 255)), 5
-    $breezePen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $breezePen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
-
-    $bp = New-Object System.Drawing.Drawing2D.GraphicsPath
-    Add-QuadCurve -Path $bp -X0 24 -Y0 84  -Qx 60 -Qy 76  -X1 96  -Y1 84
-    $g.DrawPath($breezePen, $bp); $bp.Reset()
-    Add-QuadCurve -Path $bp -X0 20 -Y0 124 -Qx 56 -Qy 116 -X1 86  -Y1 124
-    $g.DrawPath($breezePen, $bp); $bp.Reset()
-    Add-QuadCurve -Path $bp -X0 36 -Y0 168 -Qx 72 -Qy 160 -X1 104 -Y1 168
-    $g.DrawPath($breezePen, $bp)
-    $bp.Dispose()
-    $breezePen.Dispose()
-
     # ---- stem ----
     $stemPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 46, 125, 50)), 9
     $stemPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $stemPen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
     $stemPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    Add-QuadCurve -Path $stemPath -X0 50 -Y0 222 -Qx 74 -Qy 204 -X1 96 -Y1 184
+    Add-QuadCurve -Path $stemPath -X0 60 -Y0 224 -Qx 52 -Qy 235 -X1 46 -Y1 244
     $g.DrawPath($stemPen, $stemPath)
     $stemPath.Dispose()
     $stemPen.Dispose()
 
-    # ---- leaf body ----
+    # ---- leaf body: base (60,224), tip (196,40) — large, fills the frame ----
     $leafPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $leafPath.AddBezier( 96, 184,  50, 130,  90,  60, 200,  56)
-    $leafPath.AddBezier(200,  56, 180, 130, 150, 180,  96, 184)
+    $leafPath.AddBezier( 60, 224, 171, 212, 216, 152, 196,  40)
+    $leafPath.AddBezier(196,  40,  85,  52,  40, 112,  60, 224)
     $leafPath.CloseFigure()
 
     $leafBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
         (New-Object System.Drawing.PointF 0, 256),
         (New-Object System.Drawing.PointF 256, 0),
         ([System.Drawing.Color]::FromArgb(255,  46, 125,  50)),
-        ([System.Drawing.Color]::FromArgb(255, 139, 195,  74)))
+        ([System.Drawing.Color]::FromArgb(255, 156, 204, 101)))
     $g.FillPath($leafBrush, $leafPath)
     $leafBrush.Dispose()
     $leafPath.Dispose()
 
-    # ---- midrib (white, alpha ~0.55) ----
-    $midPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(140, 255, 255, 255)), ([single]3.5)
+    # ---- midrib (white, alpha ~0.6) ----
+    $midPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(153, 255, 255, 255)), ([single]4)
     $midPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $midPen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
     $midPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    Add-QuadCurve -Path $midPath -X0 96 -Y0 184 -Qx 142 -Qy 122 -X1 200 -Y1 56
+    Add-QuadCurve -Path $midPath -X0 60 -Y0 224 -Qx 115 -Qy 120 -X1 196 -Y1 40
     $g.DrawPath($midPen, $midPath)
     $midPath.Dispose()
     $midPen.Dispose()
 
-    # ---- side veins (white, alpha ~0.45) ----
-    $veinPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(115, 255, 255, 255)), 2
+    # ---- side veins (white, alpha ~0.5) ----
+    $veinPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(128, 255, 255, 255)), ([single]2.5)
     $veinPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $veinPen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
     $vp = New-Object System.Drawing.Drawing2D.GraphicsPath
-    Add-QuadCurve -Path $vp -X0 118 -Y0 156 -Qx 132 -Qy 144 -X1 150 -Y1 138
+    Add-QuadCurve -Path $vp -X0 102 -Y0 154 -Qx 115 -Qy 156 -X1 121 -Y1 168
     $g.DrawPath($veinPen, $vp); $vp.Reset()
-    Add-QuadCurve -Path $vp -X0 142 -Y0 124 -Qx 158 -Qy 114 -X1 174 -Y1 108
+    Add-QuadCurve -Path $vp -X0 102 -Y0 154 -Qx 96  -Qy 142 -X1 83  -Y1 140
     $g.DrawPath($veinPen, $vp); $vp.Reset()
-    Add-QuadCurve -Path $vp -X0 132 -Y0 168 -Qx 152 -Qy 154 -X1 174 -Y1 144
+    Add-QuadCurve -Path $vp -X0 128 -Y0 117 -Qx 141 -Qy 119 -X1 147 -Y1 131
+    $g.DrawPath($veinPen, $vp); $vp.Reset()
+    Add-QuadCurve -Path $vp -X0 128 -Y0 117 -Qx 122 -Qy 105 -X1 109 -Y1 103
+    $g.DrawPath($veinPen, $vp); $vp.Reset()
+    Add-QuadCurve -Path $vp -X0 153 -Y0 87  -Qx 165 -Qy 90  -X1 171 -Y1 100
+    $g.DrawPath($veinPen, $vp); $vp.Reset()
+    Add-QuadCurve -Path $vp -X0 153 -Y0 87  -Qx 147 -Qy 77  -X1 135 -Y1 74
     $g.DrawPath($veinPen, $vp)
     $vp.Dispose()
     $veinPen.Dispose()
 
-    # ---- data dots ----
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(255, 255, 255, 255)) -Cx 218 -Cy 40  -R 6
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(217, 255, 255, 255)) -Cx 232 -Cy 58  -R 4
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(178, 255, 255, 255)) -Cx 206 -Cy 24  -R 3
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(217, 255, 255, 255)) -Cx 40  -Cy 48  -R 5
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(217, 255, 255, 255)) -Cx 220 -Cy 218 -R 5
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(178, 255, 255, 255)) -Cx 32  -Cy 200 -R 4
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(255, 220, 237, 200)) -Cx 170 -Cy 92  -R ([single]3.5)
-    Add-Dot -G $g -Color ([System.Drawing.Color]::FromArgb(230, 220, 237, 200)) -Cx 124 -Cy 148 -R 3
+    # ---- "BreezeFlow" wordmark at the top, stretched to span the icon width ----
+    $titleFont  = New-Object System.Drawing.Font("Segoe UI", 28, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $titleBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(235, 0, 71, 77))
+    $titleFmt   = New-Object System.Drawing.StringFormat ([System.Drawing.StringFormat]::GenericTypographic)
+    $titleFmt.Alignment     = [System.Drawing.StringAlignment]::Center
+    $titleFmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+    # measure natural width, then scale x so the wordmark spans ~206px (center x=128)
+    $titleW = $g.MeasureString("BreezeFlow", $titleFont, [int]1000, $titleFmt).Width
+    $titleScale = 206.0 / $titleW
+    $tState = $g.Save()
+    $g.TranslateTransform([single]128, [single]0)
+    $g.ScaleTransform([single]$titleScale, [single]1)
+    $g.TranslateTransform([single]-128, [single]0)
+    $g.DrawString("BreezeFlow", $titleFont, $titleBrush, (New-Object System.Drawing.PointF 128, 26), $titleFmt)
+    $g.Restore($tState)
+    $titleFmt.Dispose()
+    $titleBrush.Dispose()
+    $titleFont.Dispose()
+
+    # ---- small "ELT" wordmark at the bottom, stretched horizontally (x scaled 1.7 around center x=140) ----
+    $eltFont  = New-Object System.Drawing.Font("Segoe UI", 28, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $eltBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(230, 255, 255, 255))
+    $eltFmt   = New-Object System.Drawing.StringFormat
+    $eltFmt.Alignment     = [System.Drawing.StringAlignment]::Center
+    $eltFmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $eltState = $g.Save()
+    $g.TranslateTransform([single]140, [single]0)
+    $g.ScaleTransform([single]1.7, [single]1)
+    $g.TranslateTransform([single]-140, [single]0)
+    $g.DrawString("ELT", $eltFont, $eltBrush, (New-Object System.Drawing.PointF 140, 230), $eltFmt)
+    $g.Restore($eltState)
+    $eltFmt.Dispose()
+    $eltBrush.Dispose()
+    $eltFont.Dispose()
 
     $g.Dispose()
 
